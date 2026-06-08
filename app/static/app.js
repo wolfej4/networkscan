@@ -116,7 +116,63 @@ function sparkline(samples) {
   return `<svg class="sparkline" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${rects}</svg>`;
 }
 
-/* ---------------- status ---------------- */
+/* ---------------- progress + status ---------------- */
+
+const PHASE_LABELS = {
+  starting: 'Starting',
+  nmap: 'nmap',
+  mdns: 'mDNS',
+  ssdp: 'SSDP / UPnP',
+  netbios: 'NetBIOS',
+  traceroute: 'traceroute',
+  snmp: 'SNMP',
+  done: 'Done',
+  error: 'Error',
+  idle: 'Idle',
+};
+
+function fmtDuration(sec) {
+  if (sec == null) return '';
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}h${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function renderProgress(running, prog) {
+  const box = $('#progress');
+  if (!prog || prog.phase === undefined) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+
+  const phase = prog.phase || 'idle';
+  const isError = phase === 'error';
+  const isDone = phase === 'done';
+  const isRunning = running;
+
+  const tag = $('#progress-phase');
+  tag.textContent = PHASE_LABELS[phase] || phase;
+  tag.className = 'phase-tag ' + (isError ? 'error' : isDone && !isRunning ? 'done' : 'running');
+
+  $('#progress-message').textContent = prog.message || '';
+
+  const fill = $('#progress-fill');
+  const pct = Math.min(100, Math.max(0, prog.percent || 0));
+  fill.style.width = pct + '%';
+  fill.className = 'progress-fill ' + (isError ? 'error' : isDone && !isRunning ? 'done' : '');
+
+  const bits = [];
+  if (prog.elapsed_seconds != null) bits.push(`elapsed ${fmtDuration(prog.elapsed_seconds)}`);
+  if (prog.eta_seconds != null) bits.push(`ETA ${fmtDuration(prog.eta_seconds)}`);
+  if (prog.hosts_found) bits.push(`${prog.hosts_found} host(s) found`);
+  bits.push(`${pct.toFixed(0)}%`);
+  $('#progress-stats').textContent = bits.join(' · ');
+}
 
 async function loadStatus() {
   const s = await api('/api/status');
@@ -124,27 +180,23 @@ async function loadStatus() {
   snmpEnabled = s.snmp_enabled;
   if (!$('#target').value) $('#target').value = s.default_target;
 
-  const statusEl = $('#status');
+  renderProgress(s.running, s.progress);
+
   if (s.running) {
-    statusEl.textContent = s.kind === 'discover'
-      ? 'Running discovery (mDNS / SSDP / NetBIOS / topology)…'
-      : `Scanning ${s.target}…`;
-    statusEl.className = 'running';
     $('#scan-btn').disabled = true;
     $('#discover-btn').disabled = true;
     if (!pollTimer) {
       pollTimer = setInterval(async () => {
         const ss = await api('/api/status');
+        renderProgress(ss.running, ss.progress);
         if (!ss.running) {
           clearInterval(pollTimer);
           pollTimer = null;
           $('#scan-btn').disabled = false;
           $('#discover-btn').disabled = false;
-          $('#status').textContent = 'Done';
-          $('#status').className = 'ok';
           await refresh();
         }
-      }, 2000);
+      }, 1000);
     }
   } else {
     $('#scan-btn').disabled = false;
@@ -330,8 +382,6 @@ async function refresh() {
 async function startScan() {
   const target = $('#target').value.trim();
   const profile = $('#profile').value;
-  $('#status').textContent = 'Starting…';
-  $('#status').className = 'running';
   try {
     await api('/api/scan', {
       method: 'POST',
@@ -340,20 +390,16 @@ async function startScan() {
     });
     await loadStatus();
   } catch (e) {
-    $('#status').textContent = e.message;
-    $('#status').className = 'err';
+    renderProgress(false, { phase: 'error', message: e.message, percent: 100 });
   }
 }
 
 async function startDiscover() {
-  $('#status').textContent = 'Starting discovery…';
-  $('#status').className = 'running';
   try {
     await api('/api/discover', { method: 'POST' });
     await loadStatus();
   } catch (e) {
-    $('#status').textContent = e.message;
-    $('#status').className = 'err';
+    renderProgress(false, { phase: 'error', message: e.message, percent: 100 });
   }
 }
 

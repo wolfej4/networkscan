@@ -45,16 +45,21 @@ def traceroute(ip: str, max_hops: int = 12, timeout: float = 15.0) -> list[str]:
     return hops
 
 
+def traceroute_and_store(ip: str):
+    """Run traceroute against a single IP and persist hop links."""
+    ts = _now()
+    hops = traceroute(ip)
+    prev = SELF
+    for i, hop in enumerate(hops):
+        db.upsert_link(prev, hop, "traceroute", i, ts)
+        prev = hop
+    db.upsert_link(prev, ip, "traceroute", len(hops), ts)
+
+
 def map_topology(target_ips: list[str]):
     """Run traceroute against each target IP and persist hop links."""
-    ts = _now()
     for ip in target_ips:
-        hops = traceroute(ip)
-        prev = SELF
-        for i, hop in enumerate(hops):
-            db.upsert_link(prev, hop, "traceroute", i, ts)
-            prev = hop
-        db.upsert_link(prev, ip, "traceroute", len(hops), ts)
+        traceroute_and_store(ip)
 
 
 # ---------- SNMP / LLDP ----------
@@ -99,11 +104,18 @@ def snmp_neighbors(target: str, community: str) -> list[dict]:
     return neighbors
 
 
-def map_snmp(target_ips: list[str], community: str | None = None):
+def snmp_walk_and_store(ip: str, community: str | None = None):
     community = community or os.environ.get("NETSCAN_SNMP_COMMUNITY", "")
     if not community:
         return
     ts = _now()
+    for n in snmp_neighbors(ip, community):
+        db.upsert_link(ip, n["name"], n["source"], None, ts)
+
+
+def map_snmp(target_ips: list[str], community: str | None = None):
+    community = community or os.environ.get("NETSCAN_SNMP_COMMUNITY", "")
+    if not community:
+        return
     for ip in target_ips:
-        for n in snmp_neighbors(ip, community):
-            db.upsert_link(ip, n["name"], n["source"], None, ts)
+        snmp_walk_and_store(ip, community)

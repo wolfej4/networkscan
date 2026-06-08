@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from . import db, scanner, uptime
+from . import db, progress, scanner, uptime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -77,6 +77,7 @@ def api_status():
             or "192.168.1.0/24",
             "gateway": scanner.gateway_ip(),
             "snmp_enabled": bool(os.environ.get("NETSCAN_SNMP_COMMUNITY")),
+            "progress": progress.snapshot(),
         }
     )
 
