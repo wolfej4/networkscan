@@ -21,9 +21,17 @@
       <button id="discover-btn" class="secondary" title="Re-run mDNS / SSDP / NetBIOS + topology only">Discover</button>
       <button id="refresh-btn" class="secondary">Refresh</button>
       <button id="clear-btn" class="danger">Clear DB</button>
-      <span id="status"></span>
       <span class="spacer"></span>
       <button id="theme-btn" class="icon-btn" title="Toggle theme">🌓</button>
+    </div>
+    <div id="progress" hidden>
+      <div class="progress-meta">
+        <span id="progress-phase" class="phase-tag">idle</span>
+        <span id="progress-message"></span>
+        <span class="spacer"></span>
+        <span id="progress-stats"></span>
+      </div>
+      <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
     </div>
   </header>
 

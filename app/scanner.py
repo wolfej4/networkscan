@@ -1,12 +1,16 @@
 import ipaddress
 import logging
+import os
+import re
+import shlex
 import socket
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 
 import nmap
 
-from . import db, device_type, discovery, oui, topology
+from . import db, device_type, discovery, oui, progress, topology
 
 log = logging.getLogger(__name__)
 
@@ -51,27 +55,128 @@ def _scan_arguments(profile):
     return "-T4 --top-ports 1000 -sV -O --osscan-guess -n"
 
 
-def _enrich_after_scan(scanned_ips: list[str], gw: str | None):
-    """Run mDNS/SSDP/NetBIOS + topology + classification for the given IPs."""
-    log.info("Enriching %d hosts", len(scanned_ips))
+# ---------- nmap with live progress ----------
+
+_RE_PCT = re.compile(r"About\s+([\d.]+)%\s+done")
+_RE_REMAINING = re.compile(r"\((\d+):(\d+):(\d+)\s+remaining\)")
+_RE_STATS = re.compile(
+    r"Stats:\s+\S+\s+elapsed;\s+(\d+)\s+hosts\s+completed.*?undergoing\s+(.+)$"
+)
+_RE_DISCOVERED = re.compile(r"Discovered open port|Nmap scan report for")
+_RE_HOSTS_UP = re.compile(r"(\d+)\s+hosts? up")
+
+
+def _run_nmap_with_progress(target: str, profile: str) -> str:
+    """Run nmap as a subprocess so we can parse live progress.
+
+    Returns the XML output (later fed to python-nmap's parser).
+    """
+    args = _scan_arguments(profile).split()
+    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w") as tmp:
+        xml_path = tmp.name
+
+    cmd = ["nmap", *args, "-v", "--stats-every", "2s", "-oX", xml_path, target]
+    log.info("Running: %s", " ".join(shlex.quote(c) for c in cmd))
+    progress.update(phase="nmap", percent=0.0, message=f"Starting nmap on {target}")
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    activity = "starting"
+    last_pct = 0.0
+    hosts_seen = 0
+    try:
+        for raw in proc.stdout:  # type: ignore[union-attr]
+            line = raw.rstrip()
+            if not line:
+                continue
+
+            m = _RE_STATS.search(line)
+            if m:
+                hosts_seen = int(m.group(1))
+                activity = m.group(2).strip().rstrip(".")
+                progress.update(hosts_found=hosts_seen)
+
+            m = _RE_PCT.search(line)
+            if m:
+                last_pct = float(m.group(1))
+                eta = None
+                em = _RE_REMAINING.search(line)
+                if em:
+                    h, mi, s = (int(em.group(i)) for i in (1, 2, 3))
+                    eta = h * 3600 + mi * 60 + s
+                progress.update(
+                    phase="nmap",
+                    percent=last_pct,
+                    message=f"nmap · {activity}",
+                    eta_seconds=eta,
+                )
+
+            if "Nmap scan report for" in line:
+                hosts_seen += 1
+                progress.update(hosts_found=hosts_seen)
+    finally:
+        proc.wait()
+
+    if proc.returncode != 0:
+        try:
+            os.unlink(xml_path)
+        except OSError:
+            pass
+        raise RuntimeError(f"nmap exited with code {proc.returncode}")
 
     try:
+        with open(xml_path) as f:
+            xml = f.read()
+    finally:
+        try:
+            os.unlink(xml_path)
+        except OSError:
+            pass
+    return xml
+
+
+# ---------- enrichment pipeline ----------
+
+def _enrich_after_scan(scanned_ips: list[str], gw: str | None):
+    log.info("Enriching %d hosts", len(scanned_ips))
+
+    # mDNS (~5s) — phase 2 of 5
+    progress.update(phase="mdns", percent=0.0,
+                    message=f"mDNS browse ({len(scanned_ips)} hosts known)")
+    try:
         mdns_by_ip = discovery.discover_mdns(duration=5.0)
+        progress.update(percent=100.0)
     except Exception as e:  # noqa: BLE001
         log.warning("mDNS discovery failed: %s", e)
         mdns_by_ip = {}
 
+    # SSDP (~4s) — phase 3
+    progress.update(phase="ssdp", percent=0.0, message="SSDP / UPnP M-SEARCH")
     try:
         ssdp_by_ip = discovery.discover_ssdp(duration=4.0)
+        progress.update(percent=100.0)
     except Exception as e:  # noqa: BLE001
         log.warning("SSDP discovery failed: %s", e)
         ssdp_by_ip = {}
 
-    try:
-        nb_by_ip = discovery.discover_netbios(scanned_ips)
-    except Exception as e:  # noqa: BLE001
-        log.warning("NetBIOS discovery failed: %s", e)
-        nb_by_ip = {}
+    # NetBIOS — per-host loop with progress
+    nb_by_ip: dict[str, str] = {}
+    total = len(scanned_ips)
+    progress.update(phase="netbios", percent=0.0,
+                    message=f"NetBIOS lookups (0/{total})")
+    for i, ip in enumerate(scanned_ips, start=1):
+        try:
+            name = discovery.netbios_name(ip)
+            if name:
+                nb_by_ip[ip] = name
+        except Exception as e:  # noqa: BLE001
+            log.debug("NetBIOS lookup failed for %s: %s", ip, e)
+        progress.update(
+            percent=(i / total) * 100 if total else 100,
+            message=f"NetBIOS lookups ({i}/{total}) → {ip}",
+        )
 
     # Persist enrichment + classify.
     with db.get_db() as conn:
@@ -112,18 +217,36 @@ def _enrich_after_scan(scanned_ips: list[str], gw: str | None):
                 netbios=nb,
             )
 
-    # Topology: traceroute to every host (cheap on LAN), plus SNMP/LLDP.
-    try:
-        topology.map_topology(scanned_ips)
-    except Exception as e:  # noqa: BLE001
-        log.warning("Traceroute mapping failed: %s", e)
-    try:
-        topology.map_snmp(scanned_ips)
-    except Exception as e:  # noqa: BLE001
-        log.warning("SNMP mapping failed: %s", e)
+    # Traceroute — per-host loop
+    progress.update(phase="traceroute", percent=0.0,
+                    message=f"Tracing routes (0/{total})")
+    for i, ip in enumerate(scanned_ips, start=1):
+        try:
+            topology.traceroute_and_store(ip)
+        except Exception as e:  # noqa: BLE001
+            log.debug("Traceroute failed for %s: %s", ip, e)
+        progress.update(
+            percent=(i / total) * 100 if total else 100,
+            message=f"Tracing routes ({i}/{total}) → {ip}",
+        )
+
+    # SNMP (only if community configured)
+    if os.environ.get("NETSCAN_SNMP_COMMUNITY"):
+        progress.update(phase="snmp", percent=0.0,
+                        message=f"SNMP LLDP/CDP walk (0/{total})")
+        for i, ip in enumerate(scanned_ips, start=1):
+            try:
+                topology.snmp_walk_and_store(ip)
+            except Exception as e:  # noqa: BLE001
+                log.debug("SNMP walk failed for %s: %s", ip, e)
+            progress.update(
+                percent=(i / total) * 100 if total else 100,
+                message=f"SNMP LLDP/CDP walk ({i}/{total}) → {ip}",
+            )
 
 
 def run_scan(target, profile="standard", enrich=True):
+    progress.reset(target=target)
     started = _now()
     scan_id = db.create_scan(target, started)
     scanned_ips: list[str] = []
@@ -137,9 +260,9 @@ def run_scan(target, profile="standard", enrich=True):
             except ValueError as e:
                 raise ValueError(f"Invalid target '{target}': {e}")
 
+        xml = _run_nmap_with_progress(target, profile)
         nm = nmap.PortScanner()
-        args = _scan_arguments(profile)
-        nm.scan(hosts=target, arguments=args)
+        nm.analyse_nmap_xml_scan(xml)
 
         found = 0
         with db.get_db() as conn:
@@ -183,20 +306,28 @@ def run_scan(target, profile="standard", enrich=True):
                             p.get("product"), p.get("version"), ts,
                         )
 
+        progress.update(hosts_found=found)
+
         if enrich and scanned_ips:
             _enrich_after_scan(scanned_ips, gateway_ip())
 
+        progress.finish(f"Complete · {found} host(s) up")
         db.finish_scan(scan_id, "complete", f"{found} host(s) up", _now())
         return scan_id, {"hosts_found": found}
 
     except Exception as e:  # noqa: BLE001
+        progress.finish(str(e), error=True)
         db.finish_scan(scan_id, "error", str(e), _now())
         raise
 
 
 def run_discovery_only():
-    """Run discovery + enrichment without a full nmap sweep — useful for
-    refreshing mDNS/SSDP/NetBIOS info between scans."""
+    progress.reset(target="(passive discovery)")
     ips = db.all_host_ips()
-    _enrich_after_scan(ips, gateway_ip())
-    return {"enriched": len(ips)}
+    try:
+        _enrich_after_scan(ips, gateway_ip())
+        progress.finish(f"Discovery complete · {len(ips)} host(s)")
+        return {"enriched": len(ips)}
+    except Exception as e:  # noqa: BLE001
+        progress.finish(str(e), error=True)
+        raise
