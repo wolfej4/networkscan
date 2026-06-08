@@ -30,7 +30,7 @@ live device table and a force-directed network graph.
 
 ```bash
 docker compose up -d --build
-# open http://<docker-host>:8080
+# open http://<docker-host>:8081
 ```
 
 `network_mode: host` is required so nmap can do ARP discovery and OS
@@ -41,7 +41,7 @@ Scan data is stored in `./data/netscan.db` on the host.
 
 | Variable                   | Default              | Purpose                                                     |
 |----------------------------|----------------------|-------------------------------------------------------------|
-| `NETSCAN_PORT`             | `8080`               | HTTP listen port                                            |
+| `NETSCAN_PORT`             | `8081`               | HTTP listen port                                            |
 | `NETSCAN_DB`               | `/data/netscan.db`   | SQLite path inside the container                            |
 | `NETSCAN_DEFAULT_TARGET`   | (auto-detected)      | Default CIDR shown in the UI                                |
 | `NETSCAN_UPTIME_INTERVAL`  | `300`                | Uptime ping interval in seconds (`0` disables)              |
@@ -52,21 +52,21 @@ Scan data is stored in `./data/netscan.db` on the host.
 
 ```bash
 # kick off a full scan
-curl -X POST http://localhost:8080/api/scan \
+curl -X POST http://localhost:8081/api/scan \
   -H 'content-type: application/json' \
   -d '{"target":"192.168.1.0/24","profile":"standard"}'
 
 # re-run passive discovery + topology against already-known hosts
-curl -X POST http://localhost:8080/api/discover
+curl -X POST http://localhost:8081/api/discover
 
 # list hosts (includes uptime_24h, device_type, mDNS/SSDP/NetBIOS info)
-curl http://localhost:8080/api/hosts
+curl http://localhost:8081/api/hosts
 
 # topology links
-curl http://localhost:8080/api/topology
+curl http://localhost:8081/api/topology
 
 # per-host uptime samples
-curl http://localhost:8080/api/hosts/1/uptime?hours=24
+curl http://localhost:8081/api/hosts/1/uptime?hours=24
 ```
 
 ## Security notes

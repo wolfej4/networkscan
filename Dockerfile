@@ -26,7 +26,7 @@ COPY app/ ./app/
 
 ENV PYTHONUNBUFFERED=1 \
     NETSCAN_DB=/data/netscan.db \
-    NETSCAN_PORT=8080 \
+    NETSCAN_PORT=8081 \
     NETSCAN_OUI_CSV=/app/data/oui.csv \
     NETSCAN_UPTIME_INTERVAL=300 \
     NETSCAN_SNMP_COMMUNITY=
@@ -34,6 +34,6 @@ ENV PYTHONUNBUFFERED=1 \
 RUN mkdir -p /data
 VOLUME ["/data"]
 
-EXPOSE 8080
+EXPOSE 8081
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "600", "app.main:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8081", "--workers", "1", "--threads", "8", "--timeout", "600", "app.main:app"]

@@ -13,7 +13,7 @@ services:
     volumes:
       - ./data:/data
     environment:
-      - NETSCAN_PORT=8080
+      - NETSCAN_PORT=8081
       - NETSCAN_DEFAULT_TARGET=192.168.1.0/24
       # How often (seconds) to ping known hosts for uptime tracking. 0 disables.
       - NETSCAN_UPTIME_INTERVAL=300
