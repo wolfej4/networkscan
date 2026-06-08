@@ -1,0 +1,17 @@
+services:
+  netscan:
+    build: .
+    image: netscan:latest
+    container_name: netscan
+    # Host networking is required for accurate ARP / MAC discovery
+    # and for scanning your LAN as if from the host itself.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./data:/data
+    environment:
+      - NETSCAN_PORT=8080
+      - NETSCAN_DEFAULT_TARGET=192.168.1.0/24
+    restart: unless-stopped

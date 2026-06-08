@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NetScan</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>NetScan</h1>
+    <div class="controls">
+      <input id="target" type="text" placeholder="e.g. 192.168.1.0/24" />
+      <select id="profile">
+        <option value="quick">Quick (top 100 ports)</option>
+        <option value="standard" selected>Standard (top 1000 + OS)</option>
+        <option value="deep">Deep (all TCP + OS)</option>
+      </select>
+      <button id="scan-btn">Scan</button>
+      <button id="refresh-btn" class="secondary">Refresh</button>
+      <button id="clear-btn" class="danger">Clear DB</button>
+      <span id="status"></span>
+    </div>
+  </header>
+
+  <main>
+    <section id="graph-section">
+      <h2>Network map</h2>
+      <div id="graph"></div>
+    </section>
+
+    <section id="table-section">
+      <h2>Devices (<span id="host-count">0</span>)</h2>
+      <table id="hosts">
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Hostname</th>
+            <th>MAC</th>
+            <th>Vendor</th>
+            <th>OS</th>
+            <th>Open ports</th>
+            <th>Last seen</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="scans-section">
+      <h2>Recent scans</h2>
+      <table id="scans">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Target</th>
+            <th>Started</th>
+            <th>Finished</th>
+            <th>Status</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
