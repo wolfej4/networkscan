@@ -1,4 +1,5 @@
-:root {
+:root,
+[data-theme="dark"] {
   --bg: #0f1419;
   --panel: #1a2129;
   --panel-2: #232c36;
@@ -10,6 +11,32 @@
   --ok: #4ade80;
   --warn: #fbbf24;
   --border: #2c3742;
+  --graph-bg: #0b1118;
+  --row-hover: #232c36;
+  --shadow: 0 1px 0 rgba(0,0,0,0.3);
+  --sparkline-up: #4ade80;
+  --sparkline-down: #ff6b6b;
+  --sparkline-bg: #1a2129;
+}
+
+[data-theme="light"] {
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-2: #eef1f6;
+  --fg: #1a2129;
+  --muted: #5a6776;
+  --accent: #2e7fd1;
+  --accent-2: #1e5fa1;
+  --danger: #d4351c;
+  --ok: #1f9d55;
+  --warn: #c97a00;
+  --border: #d8dee7;
+  --graph-bg: #f9fafc;
+  --row-hover: #f0f3f8;
+  --shadow: 0 1px 0 rgba(0,0,0,0.05);
+  --sparkline-up: #1f9d55;
+  --sparkline-down: #d4351c;
+  --sparkline-bg: #eef1f6;
 }
 
 * { box-sizing: border-box; }
@@ -21,6 +48,7 @@ html, body {
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
+  transition: background 0.15s, color 0.15s;
 }
 
 header {
@@ -31,6 +59,7 @@ header {
   align-items: center;
   gap: 18px;
   flex-wrap: wrap;
+  box-shadow: var(--shadow);
 }
 
 header h1 {
@@ -45,7 +74,10 @@ header h1 {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+  flex: 1;
 }
+
+.spacer { flex: 1; }
 
 input, select {
   background: var(--panel-2);
@@ -60,20 +92,27 @@ input { min-width: 200px; }
 
 button {
   background: var(--accent);
-  color: #0b1118;
+  color: #fff;
   border: 0;
   border-radius: 4px;
   padding: 7px 14px;
   cursor: pointer;
-  font-weight: 600;
   font: inherit;
   font-weight: 600;
 }
+[data-theme="dark"] button { color: #0b1118; }
 
 button:hover { background: var(--accent-2); color: #fff; }
 button.secondary { background: var(--panel-2); color: var(--fg); border: 1px solid var(--border); }
 button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
-button.danger:hover { background: var(--danger); color: #0b1118; }
+button.danger:hover { background: var(--danger); color: #fff; }
+button.icon-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  font-size: 16px;
+}
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 #status {
@@ -106,11 +145,38 @@ section h2 {
 }
 
 #graph {
-  height: 500px;
-  background: #0b1118;
+  height: 520px;
+  background: var(--graph-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+
+#graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  border: 1px solid rgba(0,0,0,0.2);
+}
+
+.dot.router      { background: #fbbf24; }
+.dot.switch      { background: #f59e0b; }
+.dot.server      { background: #a78bfa; }
+.dot.workstation { background: #4ea8ff; }
+.dot.phone       { background: #38bdf8; }
+.dot.iot         { background: #4ade80; }
+.dot.tv          { background: #f472b6; }
+.dot.unknown     { background: #8b97a3; }
 
 table {
   width: 100%;
@@ -132,9 +198,9 @@ th {
   letter-spacing: 0.5px;
 }
 
-tbody tr:hover { background: var(--panel-2); }
+tbody tr:hover { background: var(--row-hover); }
 
-.port-chip {
+.port-chip, .svc-chip {
   display: inline-block;
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -145,6 +211,40 @@ tbody tr:hover { background: var(--panel-2); }
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
+.svc-chip { font-family: inherit; }
+
 .muted { color: var(--muted); }
 .row-del { color: var(--danger); background: transparent; padding: 2px 6px; border: 1px solid var(--border); }
-.row-del:hover { background: var(--danger); color: #0b1118; }
+.row-del:hover { background: var(--danger); color: #fff; }
+
+.type-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.uptime-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+}
+.uptime-pct { font-weight: 600; font-size: 13px; }
+.uptime-pct.good { color: var(--ok); }
+.uptime-pct.warn { color: var(--warn); }
+.uptime-pct.bad  { color: var(--danger); }
+.uptime-meta { font-size: 11px; color: var(--muted); }
+
+.sparkline {
+  display: block;
+  width: 120px;
+  height: 22px;
+  background: var(--sparkline-bg);
+  border-radius: 2px;
+}

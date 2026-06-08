@@ -1,11 +1,14 @@
 import ipaddress
+import logging
 import socket
 import subprocess
 from datetime import datetime, timezone
 
 import nmap
 
-from . import db
+from . import db, device_type, discovery, oui, topology
+
+log = logging.getLogger(__name__)
 
 
 def _now():
@@ -13,12 +16,10 @@ def _now():
 
 
 def detect_local_cidr():
-    """Best-effort detection of the host's primary IPv4 /24."""
     try:
         out = subprocess.check_output(
             ["ip", "-4", "route", "get", "1.1.1.1"], text=True, timeout=2
         )
-        # Example: "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.42 uid 0"
         parts = out.split()
         if "src" in parts:
             ip = parts[parts.index("src") + 1]
@@ -43,12 +44,6 @@ def gateway_ip():
 
 
 def _scan_arguments(profile):
-    """Return nmap arguments for a given profile.
-
-    quick    : ping sweep + top 100 ports, no OS detection (fastest)
-    standard : top 1000 ports, service detection
-    deep     : full TCP scan + OS detection (slow, needs root)
-    """
     if profile == "quick":
         return "-T4 --top-ports 100 -sV --version-light -n"
     if profile == "deep":
@@ -56,16 +51,84 @@ def _scan_arguments(profile):
     return "-T4 --top-ports 1000 -sV -O --osscan-guess -n"
 
 
-def run_scan(target, profile="standard"):
-    """Run an nmap scan against target (CIDR or IP) and persist results.
-
-    Returns (scan_id, summary_dict). Raises on fatal errors.
-    """
-    started = _now()
-    scan_id = db.create_scan(target, started)
+def _enrich_after_scan(scanned_ips: list[str], gw: str | None):
+    """Run mDNS/SSDP/NetBIOS + topology + classification for the given IPs."""
+    log.info("Enriching %d hosts", len(scanned_ips))
 
     try:
-        # Validate target parses as a network or IP.
+        mdns_by_ip = discovery.discover_mdns(duration=5.0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("mDNS discovery failed: %s", e)
+        mdns_by_ip = {}
+
+    try:
+        ssdp_by_ip = discovery.discover_ssdp(duration=4.0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("SSDP discovery failed: %s", e)
+        ssdp_by_ip = {}
+
+    try:
+        nb_by_ip = discovery.discover_netbios(scanned_ips)
+    except Exception as e:  # noqa: BLE001
+        log.warning("NetBIOS discovery failed: %s", e)
+        nb_by_ip = {}
+
+    # Persist enrichment + classify.
+    with db.get_db() as conn:
+        for ip in set(scanned_ips) | set(mdns_by_ip) | set(ssdp_by_ip) | set(nb_by_ip):
+            host_id = db.host_id_for_ip(conn, ip)
+            if not host_id:
+                continue
+            row = conn.execute(
+                "SELECT mac, vendor FROM hosts WHERE id=?", (host_id,)
+            ).fetchone()
+            mac = row["mac"] if row else None
+            existing_vendor = row["vendor"] if row else None
+            vendor_guess = existing_vendor or oui.vendor(mac)
+
+            mdns = mdns_by_ip.get(ip, [])
+            ssdp = ssdp_by_ip.get(ip, [])
+            nb = nb_by_ip.get(ip)
+
+            ports = [dict(p) for p in conn.execute(
+                "SELECT port, state FROM ports WHERE host_id=?", (host_id,)
+            ).fetchall()]
+
+            dtype = device_type.classify(
+                vendor=vendor_guess,
+                ports=ports,
+                mdns=mdns,
+                ssdp=ssdp,
+                netbios=nb,
+                is_gateway=(gw is not None and ip == gw),
+            )
+
+            db.update_host_enrichment(
+                conn, host_id,
+                vendor=vendor_guess,
+                device_type=dtype,
+                mdns=mdns,
+                ssdp=ssdp,
+                netbios=nb,
+            )
+
+    # Topology: traceroute to every host (cheap on LAN), plus SNMP/LLDP.
+    try:
+        topology.map_topology(scanned_ips)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Traceroute mapping failed: %s", e)
+    try:
+        topology.map_snmp(scanned_ips)
+    except Exception as e:  # noqa: BLE001
+        log.warning("SNMP mapping failed: %s", e)
+
+
+def run_scan(target, profile="standard", enrich=True):
+    started = _now()
+    scan_id = db.create_scan(target, started)
+    scanned_ips: list[str] = []
+
+    try:
         try:
             ipaddress.ip_network(target, strict=False)
         except ValueError:
@@ -86,12 +149,15 @@ def run_scan(target, profile="standard"):
                 if state != "up":
                     continue
                 found += 1
+                scanned_ips.append(host)
 
                 ip = host
                 addresses = h.get("addresses", {}) or {}
                 mac = addresses.get("mac")
                 vendor_map = h.get("vendor", {}) or {}
                 vendor = vendor_map.get(mac) if mac else None
+                if not vendor and mac:
+                    vendor = oui.vendor(mac)
 
                 hostname = h.hostname() or None
                 if not hostname:
@@ -112,20 +178,25 @@ def run_scan(target, profile="standard"):
                     for port in h[proto].keys():
                         p = h[proto][port]
                         db.upsert_port(
-                            conn,
-                            host_id,
-                            int(port),
-                            proto,
-                            p.get("state"),
-                            p.get("name"),
-                            p.get("product"),
-                            p.get("version"),
-                            ts,
+                            conn, host_id, int(port), proto,
+                            p.get("state"), p.get("name"),
+                            p.get("product"), p.get("version"), ts,
                         )
+
+        if enrich and scanned_ips:
+            _enrich_after_scan(scanned_ips, gateway_ip())
 
         db.finish_scan(scan_id, "complete", f"{found} host(s) up", _now())
         return scan_id, {"hosts_found": found}
 
-    except Exception as e:  # noqa: BLE001 - we want to log any nmap failure
+    except Exception as e:  # noqa: BLE001
         db.finish_scan(scan_id, "error", str(e), _now())
         raise
+
+
+def run_discovery_only():
+    """Run discovery + enrichment without a full nmap sweep — useful for
+    refreshing mDNS/SSDP/NetBIOS info between scans."""
+    ips = db.all_host_ips()
+    _enrich_after_scan(ips, gateway_ip())
+    return {"enriched": len(ips)}

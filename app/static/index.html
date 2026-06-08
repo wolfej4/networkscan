@@ -18,15 +18,28 @@
         <option value="deep">Deep (all TCP + OS)</option>
       </select>
       <button id="scan-btn">Scan</button>
+      <button id="discover-btn" class="secondary" title="Re-run mDNS / SSDP / NetBIOS + topology only">Discover</button>
       <button id="refresh-btn" class="secondary">Refresh</button>
       <button id="clear-btn" class="danger">Clear DB</button>
       <span id="status"></span>
+      <span class="spacer"></span>
+      <button id="theme-btn" class="icon-btn" title="Toggle theme">🌓</button>
     </div>
   </header>
 
   <main>
     <section id="graph-section">
       <h2>Network map</h2>
+      <div id="graph-legend">
+        <span><i class="dot router"></i> router</span>
+        <span><i class="dot switch"></i> switch / AP</span>
+        <span><i class="dot server"></i> server / NAS</span>
+        <span><i class="dot workstation"></i> workstation</span>
+        <span><i class="dot phone"></i> phone / tablet</span>
+        <span><i class="dot iot"></i> IoT / camera / printer</span>
+        <span><i class="dot tv"></i> TV / speaker / streaming</span>
+        <span><i class="dot unknown"></i> unknown</span>
+      </div>
       <div id="graph"></div>
     </section>
 
@@ -35,12 +48,15 @@
       <table id="hosts">
         <thead>
           <tr>
+            <th></th>
             <th>IP</th>
             <th>Hostname</th>
-            <th>MAC</th>
+            <th>Type</th>
             <th>Vendor</th>
             <th>OS</th>
             <th>Open ports</th>
+            <th>Services</th>
+            <th title="Uptime % over last 24h">Uptime 24h</th>
             <th>Last seen</th>
             <th></th>
           </tr>
